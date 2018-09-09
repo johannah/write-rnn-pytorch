@@ -43,11 +43,11 @@ class mdnLSTM(nn.Module):
         # z_os is end of stroke signal
         out_eos = torch.sigmoid(z[:,:1])
         # split into six pieces
-        z_pi, out_mu1, out_mu2, z_sigma1, z_sigma2, z_corr = torch.split(z[:,:,1:], self.number_mixtures, dim=2)
+        z_pi, out_mu1, out_mu2, z_sigma1, z_sigma2, z_corr = torch.split(z[:,1:], self.number_mixtures, dim=1)
         # softmax the pis
-        max_pi,_ = torch.max(z_pi, dim=2, keepdim=True)
+        max_pi,_ = torch.max(z_pi, dim=1, keepdim=True)
         exp_pi = torch.exp(z_pi-max_pi)
-        out_pi = exp_pi/torch.sum(exp_pi, dim=2, keepdim=True)
+        out_pi = exp_pi/torch.sum(exp_pi, dim=1, keepdim=True)
         out_sigma1 = torch.exp(z_sigma1)
         out_sigma2 = torch.exp(z_sigma2)
         out_corr = torch.tanh(z_corr)
@@ -67,84 +67,10 @@ class mdnLSTM(nn.Module):
     def get_lossfunc(self, z_pi, z_mu1, z_mu2, z_sigma1, z_sigma2, z_corr, z_eos, x1_data, x2_data, eos_data):
         result0 = self.pt_2d_normal(x1_data, x2_data, z_mu1, z_mu2, z_sigma1, z_sigma2, z_corr)
         epsilon = 1e-20
-        result1 = torch.sum(result0*z_pi, dim=2, keepdim=True)
+        result1 = torch.sum(result0*z_pi, dim=1, keepdim=True)
         result1 = -torch.log(result1+epsilon)
         result2 = -torch.log((z_eos*eos_data) + (1-z_eos)*(1-eos_data))
         result = result1+result2
-        result = torch.sum(result)
+        result = torch.mean(result)
         return result
-
-    def sample(self, sess, num=1200):
-        def get_pi_idx(x, pdf):
-            N = pdf.shape[0]
-            accumulate = 0
-            for i in range(0, N):
-                accumulate += pdf[i]
-                if (accumulate >= x):
-                    return i
-            print('error with sampling ensemble')
-            return -1
-
-        def sample_gaussian_2d(mu1, mu2, s1, s2, rho):
-            mean = [mu1, mu2]
-            cov = [[s1 * s1, rho * s1 * s2], [rho * s1 * s2, s2 * s2]]
-            x = np.random.multivariate_normal(mean, cov, 1)
-            return x[0][0], x[0][1]
-
-        prev_x = np.zeros((1, 1, 3), dtype=np.float32)
-        prev_x[0, 0, 2] = 1  # initially, we want to see beginning of new stroke
-        # TODO
-        #prev_state = sess.run(self.cell.zero_state(1, tf.float32))
-        #strokes = np.zeros((num, 3), dtype=np.float32)
-        #mixture_params = []
-
-        #for i in range(num):
-
-        #    feed = {self.input_data: prev_x, self.state_in: prev_state}
-
-        #    [o_pi,
-        #     o_mu1,
-        #     o_mu2,
-        #     o_sigma1,
-        #     o_sigma2,
-        #     o_corr,
-        #     o_eos,
-        #     next_state] = sess.run([self.pi,
-        #                             self.mu1,
-        #                             self.mu2,
-        #                             self.sigma1,
-        #                             self.sigma2,
-        #                             self.corr,
-        #                             self.eos,
-        #                             self.state_out],
-        #                            feed)
-
-        #    idx = get_pi_idx(random.random(), o_pi[0])
-
-        #    eos = 1 if random.random() < o_eos[0][0] else 0
-
-        #    next_x1, next_x2 = sample_gaussian_2d(
-        #        o_mu1[0][idx], o_mu2[0][idx], o_sigma1[0][idx], o_sigma2[0][idx], o_corr[0][idx])
-
-        #    strokes[i, :] = [next_x1, next_x2, eos]
-
-        #    params = [
-        #        o_pi[0],
-        #        o_mu1[0],
-        #        o_mu2[0],
-        #        o_sigma1[0],
-        #        o_sigma2[0],
-        #        o_corr[0],
-        #        o_eos[0]]
-        #    mixture_params.append(params)
-
-        #    prev_x = np.zeros((1, 1, 3), dtype=np.float32)
-        #    prev_x[0][0] = np.array([next_x1, next_x2, eos], dtype=np.float32)
-        #    prev_state = next_state
-
-        #strokes[:, 0:2] *= self.args.data_scale
-        #return strokes, mixture_params
-
-
-
 

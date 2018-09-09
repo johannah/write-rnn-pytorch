@@ -16,7 +16,50 @@ rdn = np.random.RandomState(33)
 # TODO one-hot the action space?
 
 torch.manual_seed(139)
-#
+
+
+def plot_losses(train_cnts, train_losses, test_cnts, test_losses, name='loss_example.png'):
+    plt.figure(figsize=(3,3))
+    plt.plot(train_cnts, train_losses, label='train loss')
+    plt.plot(test_cnts, test_losses, label='test loss')
+    plt.legend()
+    plt.savefig(name)
+    plt.close()
+
+def split_strokes(points):
+    points = np.array(points)
+    strokes = []
+    b = 0
+    for e in range(len(points)):
+        if points[e, 2] == 1.:
+            strokes += [points[b: e + 1, :2].copy()]
+            b = e + 1
+    strokes += [points[b: e + 1, :2].copy()]
+    return strokes
+
+def get_dummy_data(v_x, v_y):
+    for i in range(v_x.shape[1]):
+        v_x[:,i] = v_x[:,0]
+        v_y[:,i] = v_y[:,0]
+    return v_x, v_y
+
+def plot_strokes(strokes_x_in, strokes_y_in, name='example.png'):
+    strokes_x = deepcopy(strokes_x_in)
+    strokes_y = deepcopy(strokes_y_in)
+    f, ax = plt.subplots(1,2, figsize=(6,3))
+    epsilon = 1e-8
+    strokes_x[:, :2] = np.cumsum(strokes_x[:, :2], axis=0)
+    ax[0].scatter(strokes_x[:,0], -strokes_x[:,1], c='b', s=2)
+    for stroke in split_strokes(strokes_x):
+        ax[0].plot(stroke[:,0], -stroke[:,1], c='b')
+
+    strokes_y[:, :2] = np.cumsum(strokes_y[:, :2], axis=0)
+    ax[1].scatter(strokes_y[:,0], -strokes_y[:,1], c='b', s=2)
+    for stroke in split_strokes(strokes_y):
+        ax[1].plot(stroke[:,0], -stroke[:,1], c='b')
+    plt.savefig(name)
+    plt.close()
+
 def save_checkpoint(state, filename='model.pkl'):
     print("starting save of {}".format(filename))
     torch.save(state, filename)

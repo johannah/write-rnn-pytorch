@@ -19,7 +19,7 @@ import torch # package for building functions with learnable parameters
 import torch.nn as nn # prebuilt functions specific to neural networks
 from torch.autograd import Variable # storing data while learning
 from handwriting_lstm import mdnLSTM
-from utils import save_checkpoint
+from utils import save_checkpoint, plot_losses, plot_strokes, get_dummy_data
 from dutils import DataLoader
 rdn = np.random.RandomState(33)
 # TODO one-hot the action space?
@@ -44,8 +44,15 @@ def train(x, y, validation=False):
         output, h1_tm1, c1_tm1, h2_tm1, c2_tm1 = lstm(xin, h1_tm1, c1_tm1, h2_tm1, c2_tm1)
         outputs+=[output]
     y_pred = torch.stack(outputs, 0)
-    out_pi, out_mu1, out_mu2, out_sigma1, out_sigma2, out_corr, out_eos = lstm.get_mixture_coef(y_pred)
-    loss = lstm.get_lossfunc(out_pi, out_mu1, out_mu2, out_sigma1, out_sigma2, out_corr, out_eos, y[:,:,0][:,:,None], y[:,:,1][:,:,None], y[:,:,2][:,:,None])
+    y_pred_flat = y_pred.reshape(y_pred.shape[0]*y_pred.shape[1],y_pred.shape[2])
+    y1_flat = y[:,:,0]
+    y2_flat = y[:,:,1]
+    y3_flat = y[:,:,2]
+    y1_flat = y1_flat.reshape(y1_flat.shape[0]*y1_flat.shape[1])[:,None]
+    y2_flat = y2_flat.reshape(y2_flat.shape[0]*y2_flat.shape[1])[:,None]
+    y3_flat = y3_flat.reshape(y3_flat.shape[0]*y3_flat.shape[1])[:,None]
+    out_pi, out_mu1, out_mu2, out_sigma1, out_sigma2, out_corr, out_eos = lstm.get_mixture_coef(y_pred_flat)
+    loss = lstm.get_lossfunc(out_pi, out_mu1, out_mu2, out_sigma1, out_sigma2, out_corr, out_eos, y1_flat, y2_flat, y3_flat)
     if not validation:
         loss.backward()
         for p in lstm.parameters():
@@ -54,7 +61,7 @@ def train(x, y, validation=False):
     rloss = loss.cpu().data.numpy()
     return y_pred, rloss
 
-def loop(data_loader, num_epochs=1000, save_every=1000, train_losses=[], test_losses=[], train_cnts=[], test_cnts=[]):
+def loop(data_loader, num_epochs=1000, save_every=1000, train_losses=[], test_losses=[], train_cnts=[], test_cnts=[], dummy=False):
     print("starting training loop for data with %s batches"%data_loader.num_batches)
     st = time.time()
     if len(train_losses):
@@ -63,15 +70,13 @@ def loop(data_loader, num_epochs=1000, save_every=1000, train_losses=[], test_lo
     else:
         last_save = 0
         cnt = 0
-    v_x, v_y = data_loader.validation_data()
-    v_x = Variable(torch.FloatTensor(np.swapaxes(v_x,1,0))).to(DEVICE)
-    v_y = Variable(torch.FloatTensor(np.swapaxes(v_y,1,0))).to(DEVICE)
+    v_xn, v_yn = data_loader.validation_data()
+    v_x = Variable(torch.FloatTensor(np.swapaxes(v_xn,1,0))).to(DEVICE)
+    v_y = Variable(torch.FloatTensor(np.swapaxes(v_yn,1,0))).to(DEVICE)
 
-    print("DUMMMY Validation")
-    for i in range(v_x.shape[1]):
-        v_x[:,i] = v_x[:,0]
-        v_y[:,i] = v_y[:,0]
-
+    if dummy:
+        print("WARNING DUMMMY Validation")
+        v_x, v_y = get_dummy_data(v_x, v_y)
     for e in range(num_epochs):
         ecnt = 0
         tst = round((time.time()-st)/60., 0)
@@ -82,9 +87,11 @@ def loop(data_loader, num_epochs=1000, save_every=1000, train_losses=[], test_lo
             x, y = data_loader.next_batch()
             x = Variable(torch.FloatTensor(np.swapaxes(x,1,0))).to(DEVICE)
             y = Variable(torch.FloatTensor(np.swapaxes(y,1,0))).to(DEVICE)
-            #y_pred, loss = train(x.to(DEVICE),y.to(DEVICE),validation=False)
-            y_pred, loss = train(v_x, v_y, validation=False)
-            print('DUMMY test loss', loss)
+            if dummy:
+                y_pred, loss = train(v_x, v_y, validation=False)
+                print('DUMMY test loss', loss)
+            else:
+                y_pred, loss = train(x.to(DEVICE),y.to(DEVICE),validation=False)
             train_cnts.append(cnt)
             train_losses.append(loss)
 
@@ -92,6 +99,7 @@ def loop(data_loader, num_epochs=1000, save_every=1000, train_losses=[], test_lo
                 last_save = cnt
                 # find test loss
                 valy_pred, val_mean_loss = train(v_x,v_y,validation=True)
+
                 test_losses.append(val_mean_loss)
                 test_cnts.append(cnt)
                 print('epoch: {} saving after example {} train loss {} test loss {}'.format(e,cnt,loss,val_mean_loss))
@@ -103,8 +111,9 @@ def loop(data_loader, num_epochs=1000, save_every=1000, train_losses=[], test_lo
                         'state_dict':lstm.state_dict(),
                         'optimizer':optim.state_dict(),
                          }
-                filename = os.path.join(savedir, '%s_%015d.pkl'%(model_save_name,cnt))
-                save_checkpoint(state, filename=filename)
+                basename = os.path.join(savedir, '%s_%015d'%(model_save_name,cnt))
+                plot_losses(train_cnts, train_losses, test_cnts, test_losses, name=basename+'_loss.png')
+                save_checkpoint(state, filename=basename+'.pkl')
 
             cnt+= x.shape[1]
             ecnt+= x.shape[1]
@@ -138,23 +147,9 @@ def valid_loop(function, xvar, yvar):
         batch_loss.extend(losses)
     return trues, predicts, batch_loss
 
-def plot_results(cnt, vx_tensor, vy_tensor, name='test'):
-    # check that feature array for offset is correct from training set
-    print("predicting results for %s" %name)
-    tf_trues, tf_predicts, tf_batch_loss = valid_loop(teacher_force_predict, vx_tensor, vy_tensor)
-    trues, predicts, pbatch_loss = valid_loop(predict, vx_tensor, vy_tensor)
-    print("plotting results for %s" %name)
-    if not os.path.exists(img_savedir):
-        os.makedirs(img_savedir)
-    for e in range(trues.shape[1]):
-        filename = os.path.join(img_savedir, '%s_%s_%05d.png'%(model_save_name.replace('.pkl',''),name,e))
-        plot_traces(trues[:,e], tf_predicts[:,e], predicts[:,e], filename)
-
-
 if __name__ == '__main__':
     import argparse
 
-    learning_rate = 0.0001
     batch_size = 32
     seq_length = 300
     hidden_size = 1024
@@ -167,15 +162,18 @@ if __name__ == '__main__':
 
     img_savedir = 'predictions'
     cnt = 0
-    default_model_loadname = 'models/model_000000003700572.pkl'
+    default_model_loadname = 'models/model_000000000190304.pkl'
     if not os.path.exists(savedir):
         os.makedirs(savedir)
-
+    if not os.path.exists(img_savedir):
+        os.makedirs(img_savedir)
     parser = argparse.ArgumentParser()
     parser.add_argument('-c', '--cuda', action='store_true', default=False)
+    parser.add_argument('--dummy', action='store_true', default=False)
     parser.add_argument('-po', '--plot', action='store_true', default=False)
     parser.add_argument('-m', '--model_loadname', default=default_model_loadname)
     parser.add_argument('-ne', '--num_epochs',default=300, help='num epochs to train')
+    parser.add_argument('-lr', '--learning_rate', default=1e-4, type=float, help='learning_rate')
     parser.add_argument('-se', '--save_every',default=10000, help='how often in epochs to save training model')
     parser.add_argument('--limit', default=-1, type=int, help='limit training data to reduce convergence time')
     parser.add_argument('-l', '--load', action='store_true', default=False, help='load model to continue training or to generate. model path is specified with -m')
@@ -193,7 +191,7 @@ if __name__ == '__main__':
 
     v_x, v_y = data_loader.validation_data()
     lstm = mdnLSTM(input_size=input_size, hidden_size=hidden_size, number_mixtures=number_mixtures).to(DEVICE)
-    optim = torch.optim.Adam(lstm.parameters(), lr=learning_rate)
+    optim = torch.optim.Adam(lstm.parameters(), lr=args.learning_rate)
 
     model_save_name = 'model'
     if args.limit != -1:
@@ -215,7 +213,7 @@ if __name__ == '__main__':
 
 
     if not args.plot:
-        loop(data_loader, save_every=save_every, num_epochs=args.num_epochs, train_losses=[], test_losses=[], train_cnts=[], test_cnts=[])
+        loop(data_loader, save_every=save_every, num_epochs=args.num_epochs, train_losses=[], test_losses=[], train_cnts=[], test_cnts=[], dummy=args.dummy)
 
     #else:
     #    model_save_name = os.path.split(model_load_path)[1]
