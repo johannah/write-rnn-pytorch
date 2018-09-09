@@ -41,16 +41,13 @@ class mdnLSTM(nn.Module):
         # split of data into pi,sigma,mu for each feature dimension
         z = output
         # z_os is end of stroke signal
-        out_eos = torch.sigmoid(z[:,:,:1])
+        out_eos = torch.sigmoid(z[:,:1])
         # split into six pieces
         z_pi, out_mu1, out_mu2, z_sigma1, z_sigma2, z_corr = torch.split(z[:,:,1:], self.number_mixtures, dim=2)
-
         # softmax the pis
         max_pi,_ = torch.max(z_pi, dim=2, keepdim=True)
         exp_pi = torch.exp(z_pi-max_pi)
-        norm_pi = torch.sum(exp_pi, dim=2, keepdim=True)
-        out_pi =  exp_pi/norm_pi
-
+        out_pi = exp_pi/torch.sum(exp_pi, dim=2, keepdim=True)
         out_sigma1 = torch.exp(z_sigma1)
         out_sigma2 = torch.exp(z_sigma2)
         out_corr = torch.tanh(z_corr)
@@ -60,7 +57,7 @@ class mdnLSTM(nn.Module):
         norm1 = x1-mu1
         norm2 = x2-mu2
         s1s2 = sigma1*sigma2
-        z = (norm1/sigma1)**2 + (norm2/sigma2)**2 - 2*((rho*norm1*norm2)/s1s2)
+        z = (norm1/sigma1)**2 + (norm2/sigma2)**2 - 2*((rho*(norm1*norm2))/s1s2)
         negRho = 1-(rho**2)
         result = torch.exp(-z/(2*negRho))
         denom = 2*np.pi*(s1s2*torch.sqrt(negRho))
@@ -71,15 +68,13 @@ class mdnLSTM(nn.Module):
         result0 = self.pt_2d_normal(x1_data, x2_data, z_mu1, z_mu2, z_sigma1, z_sigma2, z_corr)
         epsilon = 1e-20
         result1 = torch.sum(result0*z_pi, dim=2, keepdim=True)
-        result1 = result1+epsilon
-        result1 = -torch.log(result1)
+        result1 = -torch.log(result1+epsilon)
         result2 = -torch.log((z_eos*eos_data) + (1-z_eos)*(1-eos_data))
         result = result1+result2
         result = torch.sum(result)
         return result
 
     def sample(self, sess, num=1200):
-
         def get_pi_idx(x, pdf):
             N = pdf.shape[0]
             accumulate = 0

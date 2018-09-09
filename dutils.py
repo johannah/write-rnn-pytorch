@@ -201,7 +201,8 @@ class DataLoader():
             batch_size=50,
             seq_length=300,
             scale_factor=10,
-            limit=500):
+            limit=500, example_limit=1e10):
+        self.example_limit = example_limit
         self.data_dir = "./data"
         self.batch_size = batch_size
         self.seq_length = seq_length
@@ -315,7 +316,8 @@ class DataLoader():
                 data = np.minimum(data, self.limit)
                 data = np.maximum(data, -self.limit)
                 data = np.array(data, dtype=np.float32)
-                data[:, 0:2] /= self.scale_factor
+                #data[:, 0:2] /= self.scale_factor
+                data[:, 0:2] /= float(self.scale_factor)
                 cur_data_counter = cur_data_counter + 1
                 if cur_data_counter % 20 == 0:
                     self.valid_data.append(data)
@@ -324,10 +326,11 @@ class DataLoader():
                     # number of equiv batches this datapoint is worth
                     counter += int(len(data) / ((self.seq_length + 2)))
 
+
         print("train data: {}, valid data: {}".format(
             len(self.data), len(self.valid_data)))
         # minus 1, since we want the ydata to be a shifted version of x data
-        self.num_batches = int(counter / self.batch_size)
+        self.num_batches = int(counter / float(self.batch_size))
 
     def validation_data(self):
         # returns validation data

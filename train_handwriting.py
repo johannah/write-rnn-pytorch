@@ -55,7 +55,7 @@ def train(x, y, validation=False):
     return y_pred, rloss
 
 def loop(data_loader, num_epochs=1000, save_every=1000, train_losses=[], test_losses=[], train_cnts=[], test_cnts=[]):
-    print("starting training loop")
+    print("starting training loop for data with %s batches"%data_loader.num_batches)
     st = time.time()
     if len(train_losses):
         last_save = train_cnts[-1]
@@ -66,17 +66,25 @@ def loop(data_loader, num_epochs=1000, save_every=1000, train_losses=[], test_lo
     v_x, v_y = data_loader.validation_data()
     v_x = Variable(torch.FloatTensor(np.swapaxes(v_x,1,0))).to(DEVICE)
     v_y = Variable(torch.FloatTensor(np.swapaxes(v_y,1,0))).to(DEVICE)
+
+    print("DUMMMY Validation")
+    for i in range(v_x.shape[1]):
+        v_x[:,i] = v_x[:,0]
+        v_y[:,i] = v_y[:,0]
+
     for e in range(num_epochs):
         ecnt = 0
         tst = round((time.time()-st)/60., 0)
         if not e%1 and e>0:
-            print("starting epoch %s, %s mins, loss %s, seen %s, last save at %s" %(e, tst, aloss[-1], cnt, last_save))
+            print("starting epoch %s, %s mins, loss %s, seen %s, last save at %s" %(e, tst, train_losses[-1], cnt, last_save))
         batch_loss = []
         for b in range(data_loader.num_batches):
             x, y = data_loader.next_batch()
             x = Variable(torch.FloatTensor(np.swapaxes(x,1,0))).to(DEVICE)
             y = Variable(torch.FloatTensor(np.swapaxes(y,1,0))).to(DEVICE)
-            y_pred, loss = train(x.to(DEVICE),y.to(DEVICE),validation=False)
+            #y_pred, loss = train(x.to(DEVICE),y.to(DEVICE),validation=False)
+            y_pred, loss = train(v_x, v_y, validation=False)
+            print('DUMMY test loss', loss)
             train_cnts.append(cnt)
             train_losses.append(loss)
 
@@ -146,7 +154,7 @@ def plot_results(cnt, vx_tensor, vy_tensor, name='test'):
 if __name__ == '__main__':
     import argparse
 
-    learning_rate = 1e-4
+    learning_rate = 0.0001
     batch_size = 32
     seq_length = 300
     hidden_size = 1024
@@ -159,14 +167,14 @@ if __name__ == '__main__':
 
     img_savedir = 'predictions'
     cnt = 0
-    model_load_path = 'models/model_000000003700572.pkl'
+    default_model_loadname = 'models/model_000000003700572.pkl'
     if not os.path.exists(savedir):
         os.makedirs(savedir)
 
     parser = argparse.ArgumentParser()
     parser.add_argument('-c', '--cuda', action='store_true', default=False)
     parser.add_argument('-po', '--plot', action='store_true', default=False)
-    parser.add_argument('-m', '--model_loadname', default=model_load_path)
+    parser.add_argument('-m', '--model_loadname', default=default_model_loadname)
     parser.add_argument('-ne', '--num_epochs',default=300, help='num epochs to train')
     parser.add_argument('-se', '--save_every',default=10000, help='how often in epochs to save training model')
     parser.add_argument('--limit', default=-1, type=int, help='limit training data to reduce convergence time')
@@ -181,12 +189,9 @@ if __name__ == '__main__':
         DEVICE = 'cpu'
 
     save_every = args.save_every
-    # load train and test set
-    #x_tensor, y_tensor = load_data("train_2d_controller.npz")
-    #valid_x_tensor, valid_y_tensor = load_data("test_2d_controller.npz")
-    #input_size = x_tensor.shape[2]
-    #output_size = y_tensor.shape[2]
-    data_loader = DataLoader(batch_size, seq_length, data_scale, limit=args.limit)
+    data_loader = DataLoader(batch_size, seq_length, data_scale)
+
+    v_x, v_y = data_loader.validation_data()
     lstm = mdnLSTM(input_size=input_size, hidden_size=hidden_size, number_mixtures=number_mixtures).to(DEVICE)
     optim = torch.optim.Adam(lstm.parameters(), lr=learning_rate)
 
@@ -195,22 +200,23 @@ if __name__ == '__main__':
         model_save_name += "_limit_%04d"%args.limit
 
     if args.load:
-        if not os.path.exists(model_load_path):
-            print("load model: %s does not exist"%model_load_path)
+        if not os.path.exists(args.model_loadname):
+            print("load model: %s does not exist"%args.model_loadname)
             sys.exit()
         else:
-            print("loading %s" %model_load_path)
-            lstm_dict = torch.load(model_load_path)
+            print("loading %s" %args.model_loadname)
+            lstm_dict = torch.load(args.model_loadname)
             lstm.load_state_dict(lstm_dict['state_dict'])
             optim.load_state_dict(lstm_dict['optimizer'])
             train_cnts = lstm_dict['train_cnts']
             train_losses = lstm_dict['train_losses']
             test_cnts = lstm_dict['test_cnts']
             test_losses = lstm_dict['test_losses']
-            # todo losses
+
 
     if not args.plot:
         loop(data_loader, save_every=save_every, num_epochs=args.num_epochs, train_losses=[], test_losses=[], train_cnts=[], test_cnts=[])
+
     #else:
     #    model_save_name = os.path.split(model_load_path)[1]
     #    plot_results(cnt, valid_x_tensor[:,:batch_size], valid_y_tensor[:,:batch_size], name='test')
