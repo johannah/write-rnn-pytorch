@@ -67,35 +67,32 @@ def predict(x, h1_tm1, c1_tm1, h2_tm1, c2_tm1, batch_num=0, use_center=True):
         pred = np.array([mu1[bn,idx], mu2[bn,idx], 0])
     return pred, h1_tm1, c1_tm1, h2_tm1, c2_tm1
 
-def generate(modelname, num=300,  data_scale=20, teacher_force_predict=True, use_center=False):
-    bn = 0
+def generate(modelname, num=300,  data_scale=20, teacher_force_predict=True, use_center=False, bn=0):
     batch_size = 1
-    assert(bn<batch_size)
     h1_tm1 = Variable(torch.zeros((batch_size, hidden_size))).to(DEVICE)
     c1_tm1 = Variable(torch.zeros((batch_size, hidden_size))).to(DEVICE)
     h2_tm1 = Variable(torch.zeros((batch_size, hidden_size))).to(DEVICE)
     c2_tm1 = Variable(torch.zeros((batch_size, hidden_size))).to(DEVICE)
 
     if teacher_force_predict:
-        data_loader = DataLoader(batch_size, seq_length, data_scale)
-        x,y = data_loader.validation_data()
-        x = Variable(torch.FloatTensor(np.swapaxes(x,1,0))).to(DEVICE)
+        data_loader = DataLoader(bn+1, seq_length, data_scale)
+        x,y = data_loader.next_batch()
+        # batch still in first dimension
+        x = Variable(torch.FloatTensor(x[bn])).to(DEVICE)
         num=x.shape[0]
-        last_x = x[0,:bn+1,:]
-    else:
-        last_x = Variable(torch.FloatTensor(np.zeros((batch_size,3)))).to(DEVICE)
+    last_x = Variable(torch.FloatTensor(np.zeros((1,3)))).to(DEVICE)
     last_x[:,2] = 1.0 # make new stroke
     strokes = np.zeros((num,3), dtype=np.float32)
     strokes[0] = last_x
+    print(strokes.shape, last_x.shape)
     for i in range(num-1):
         pred, h1_tm1, c1_tm1, h2_tm1, c2_tm1 = predict(last_x, h1_tm1, c1_tm1, h2_tm1, c2_tm1, use_center=use_center)
-        strokes[i+1] = pred
+        strokes[i+1] = pred[None,:]
         if teacher_force_predict:
             # override
-            last_x = x[i+1,:bn+1,:]
+            last_x = x[i+1,:][None,:]
         else:
             last_x = torch.FloatTensor(pred[None,:])
-
     strokes[:,:2]*=data_scale
     base = '_gen'
     if use_center:
@@ -103,13 +100,15 @@ def generate(modelname, num=300,  data_scale=20, teacher_force_predict=True, use
     if teacher_force_predict:
         fname = os.path.join(modelname.replace('.pkl', base+'_tf.png'))
         print("plotting teacher force generation: %s" %fname)
-        xtrue = x[:,bn].cpu().data.numpy()
-        strokes[:,2] = xtrue[:,2]
+        xtrue = x.cpu().data.numpy()
+        # hack to get pen up in tf
+        #strokes[:,2] = xtrue[:,2]
         plot_strokes(xtrue, strokes, name=fname)
     else:
         fname = os.path.join(modelname.replace('.pkl', base+'.png'))
         print("plotting generation: %s" %fname)
         plot_strokes(strokes, strokes*0.0, name=fname)
+
     embed()
 
 if __name__ == '__main__':
@@ -119,7 +118,7 @@ if __name__ == '__main__':
     hidden_size = 1024
     savedir = 'models'
     number_mixtures = 20
-    data_scale = 1
+    data_scale = 1.5
     input_size = 3
     train_losses, test_losses, train_cnts, test_cnts = [], [], [], []
 
@@ -136,6 +135,7 @@ if __name__ == '__main__':
     parser.add_argument('-uc', '--use_center', action='store_true', default=False, help='use means instead of sampling')
     parser.add_argument('-tf', '--teacher_force', action='store_true', default=False)
     parser.add_argument('-n', '--num',default=300, help='length of data to generate')
+    parser.add_argument('-bn', '--batch_num',type=int, default=0, help='index into batch from teacher force to use')
     parser.add_argument('--num_plot', default=10, type=int, help='number of examples from training and test to plot')
 
     args = parser.parse_args()
@@ -160,6 +160,5 @@ if __name__ == '__main__':
         test_cnts = lstm_dict['test_cnts']
         test_losses = lstm_dict['test_losses']
 
-    generate(args.model_loadname, num=args.num,  data_scale=data_scale, teacher_force_predict=args.teacher_force, use_center=args.use_center)
-    embed()
+    generate(args.model_loadname, num=args.num,  data_scale=data_scale, teacher_force_predict=args.teacher_force, use_center=args.use_center, bn=args.batch_num)
 
