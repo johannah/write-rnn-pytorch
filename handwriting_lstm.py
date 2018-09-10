@@ -18,6 +18,7 @@ from torch.autograd import Variable # storing data while learning
 rdn = np.random.RandomState(33)
 # TODO one-hot the action space?
 torch.manual_seed(139)
+epsilon = 1e-6
 
 class mdnLSTM(nn.Module):
     def __init__(self, input_size=1, hidden_size=1024, number_mixtures=20):
@@ -48,8 +49,9 @@ class mdnLSTM(nn.Module):
         max_pi,_ = torch.max(z_pi, dim=1, keepdim=True)
         exp_pi = torch.exp(z_pi-max_pi)
         out_pi = exp_pi/torch.sum(exp_pi, dim=1, keepdim=True)
-        out_sigma1 = torch.exp(z_sigma1)
-        out_sigma2 = torch.exp(z_sigma2)
+        # don't allow sigma to get too small
+        out_sigma1 = torch.exp(z_sigma1)+1e-4
+        out_sigma2 = torch.exp(z_sigma2)+1e-4
         out_corr = torch.tanh(z_corr)
         return out_pi, out_mu1, out_mu2, out_sigma1, out_sigma2, out_corr, out_eos
 
@@ -58,15 +60,14 @@ class mdnLSTM(nn.Module):
         norm2 = x2-mu2
         s1s2 = sigma1*sigma2
         z = (norm1/sigma1)**2 + (norm2/sigma2)**2 - 2*((rho*(norm1*norm2))/s1s2)
-        negRho = 1-(rho**2)
+        negRho = 1-(rho**2) + 0.05
         result = torch.exp(-z/(2*negRho))
         denom = 2*np.pi*(s1s2*torch.sqrt(negRho))
-        result = result/denom
+        result = result/(denom)
         return result
 
     def get_lossfunc(self, z_pi, z_mu1, z_mu2, z_sigma1, z_sigma2, z_corr, z_eos, x1_data, x2_data, eos_data):
         result0 = self.pt_2d_normal(x1_data, x2_data, z_mu1, z_mu2, z_sigma1, z_sigma2, z_corr)
-        epsilon = 1e-20
         result1 = torch.sum(result0*z_pi, dim=1, keepdim=True)
         result1 = -torch.log(result1+epsilon)
         result2 = -torch.log((z_eos*eos_data) + (1-z_eos)*(1-eos_data))

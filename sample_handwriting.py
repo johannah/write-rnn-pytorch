@@ -49,62 +49,77 @@ def get_pi_idx(x, pdf):
     print("error sampling")
     return -1
 
-def teacher_force_predict(x, validation=False):
-    bs = x.shape[1]
-    ts = x.shape[0]
-    number_mixtures = 20
-    out_shape = (ts,bs,number_mixtures)
-    h1_tm1 = Variable(torch.zeros((bs, hidden_size))).to(DEVICE)
-    c1_tm1 = Variable(torch.zeros((bs, hidden_size))).to(DEVICE)
-    h2_tm1 = Variable(torch.zeros((bs, hidden_size))).to(DEVICE)
-    c2_tm1 = Variable(torch.zeros((bs, hidden_size))).to(DEVICE)
-    outputs = []
+def predict(x, h1_tm1, c1_tm1, h2_tm1, c2_tm1, batch_num=0, use_center=True):
     # one batch of x
-    for i in np.arange(0,x.shape[0]):
-        xin = x[i]
-        output, h1_tm1, c1_tm1, h2_tm1, c2_tm1 = lstm(xin, h1_tm1, c1_tm1, h2_tm1, c2_tm1)
-        outputs+=[output]
-    y_pred = torch.stack(outputs, 0)
-    y_pred_flat = y_pred.reshape(y_pred.shape[0]*y_pred.shape[1],y_pred.shape[2])
+    output, h1_tm1, c1_tm1, h2_tm1, c2_tm1 = lstm(x, h1_tm1, c1_tm1, h2_tm1, c2_tm1)
     # out_pi, out_mu1, out_mu2, out_sigma1, out_sigma2, out_corr, out_eos
-    out_pi, out_mu1, out_mu2, out_sigma1, out_sigma2, out_corr, out_eos = lstm.get_mixture_coef(y_pred_flat)
-    mso = (out_pi.reshape(out_shape).cpu().data.numpy(),
-           out_mu1.reshape(out_shape).cpu().data.numpy(), out_mu2.reshape(out_shape).cpu().data.numpy(),
-           out_sigma1.reshape(out_shape).cpu().data.numpy(), out_sigma2.reshape(out_shape).cpu().data.numpy(),
-           out_corr.reshape(out_shape).cpu().data.numpy(), out_eos.reshape(ts, bs, 1).cpu().data.numpy())
-    return y_pred, mso
+    out_pi, out_mu1, out_mu2, out_sigma1, out_sigma2, out_corr, out_eos = lstm.get_mixture_coef(output)
+    mso = (out_pi.cpu().data.numpy(),
+           out_mu1.cpu().data.numpy(), out_mu2.cpu().data.numpy(),
+           out_sigma1.cpu().data.numpy(), out_sigma2.cpu().data.numpy(),
+           out_corr.cpu().data.numpy(), out_eos.cpu().data.numpy())
+    pi, mu1, mu2, sigma1, sigma2, corr, eos = mso
+    # choose mixture
+    bn = batch_num
+    idx = rdn.choice(np.arange(pi.shape[1]), p=pi[bn])
+    pred = sample_2d(eos[bn], mu1[bn,idx], mu2[bn,idx], sigma1[bn,idx], sigma2[bn,idx], corr[bn,idx])
+    if use_center:
+        pred = np.array([mu1[bn,idx], mu2[bn,idx], 0])
+    return pred, h1_tm1, c1_tm1, h2_tm1, c2_tm1
 
-def generate_teacher_force(modelname, data_scale=20, dummy=False):
-    # initialize as start of stroke
-    #    prev_x = Variable(torch.FloatTensor(np.zeros((1,1,3)))).to(DEVICE)
-    x,y = data_loader.validation_data()
-    x = Variable(torch.FloatTensor(np.swapaxes(x,1,0))).to(DEVICE)
-    y = Variable(torch.FloatTensor(np.swapaxes(y,1,0))).to(DEVICE)
-    if dummy:
-        print("GENERATING FROM DUMMY DATA")
-        x,y = get_dummy_data(x,y)
-    num=x.shape[0]
-    y_pred, mxt = teacher_force_predict(x[:,:1])
-    pi, mu1, mu2, sigma1, sigma2, corr, eos = mxt
-    strokes = np.zeros((num,3), dtype=np.float32)
+def generate(modelname, num=300,  data_scale=20, teacher_force_predict=True, use_center=False):
     bn = 0
-    for i in range(num):
-        idx = get_pi_idx(rdn.rand(), pi[i,bn])
-        strokes[i] = sample_2d(eos[i,0], mu1[i,0,idx], mu2[i,0,idx], sigma1[i,0,idx], sigma2[i,0,idx], corr[i,0,idx])
+    batch_size = 1
+    assert(bn<batch_size)
+    h1_tm1 = Variable(torch.zeros((batch_size, hidden_size))).to(DEVICE)
+    c1_tm1 = Variable(torch.zeros((batch_size, hidden_size))).to(DEVICE)
+    h2_tm1 = Variable(torch.zeros((batch_size, hidden_size))).to(DEVICE)
+    c2_tm1 = Variable(torch.zeros((batch_size, hidden_size))).to(DEVICE)
+
+    if teacher_force_predict:
+        data_loader = DataLoader(batch_size, seq_length, data_scale)
+        x,y = data_loader.validation_data()
+        x = Variable(torch.FloatTensor(np.swapaxes(x,1,0))).to(DEVICE)
+        num=x.shape[0]
+        last_x = x[0,:bn+1,:]
+    else:
+        last_x = Variable(torch.FloatTensor(np.zeros((batch_size,3)))).to(DEVICE)
+    last_x[:,2] = 1.0 # make new stroke
+    strokes = np.zeros((num,3), dtype=np.float32)
+    strokes[0] = last_x
+    for i in range(num-1):
+        pred, h1_tm1, c1_tm1, h2_tm1, c2_tm1 = predict(last_x, h1_tm1, c1_tm1, h2_tm1, c2_tm1, use_center=use_center)
+        strokes[i+1] = pred
+        if teacher_force_predict:
+            # override
+            last_x = x[i+1,:bn+1,:]
+        else:
+            last_x = torch.FloatTensor(pred[None,:])
+
     strokes[:,:2]*=data_scale
-    fname = os.path.join(img_savedir, modelname.replace('.pkl', '_tf.png'))
-    plot_strokes(x[:,0].cpu().data.numpy(),strokes, name=fname)
+    base = '_gen'
+    if use_center:
+        base = base+'_center'
+    if teacher_force_predict:
+        fname = os.path.join(modelname.replace('.pkl', base+'_tf.png'))
+        print("plotting teacher force generation: %s" %fname)
+        xtrue = x[:,bn].cpu().data.numpy()
+        strokes[:,2] = xtrue[:,2]
+        plot_strokes(xtrue, strokes, name=fname)
+    else:
+        fname = os.path.join(modelname.replace('.pkl', base+'.png'))
+        print("plotting generation: %s" %fname)
+        plot_strokes(strokes, strokes*0.0, name=fname)
+    embed()
 
 if __name__ == '__main__':
     import argparse
-
     batch_size = 32
     seq_length = 300
     hidden_size = 1024
     savedir = 'models'
     number_mixtures = 20
-    grad_clip = 10
-    data_scale = 20
+    data_scale = 1
     input_size = 3
     train_losses, test_losses, train_cnts, test_cnts = [], [], [], []
 
@@ -116,11 +131,11 @@ if __name__ == '__main__':
     if not os.path.exists(img_savedir):
         os.makedirs(img_savedir)
     parser = argparse.ArgumentParser()
+    parser.add_argument('model_loadname', default=default_model_loadname)
     parser.add_argument('-c', '--cuda', action='store_true', default=False)
-    parser.add_argument('--dummy', action='store_true', default=False)
-    parser.add_argument('-m', '--model_loadname', default=default_model_loadname)
-    parser.add_argument('-ne', '--num_epochs',default=300, help='num epochs to train')
-    parser.add_argument('-se', '--save_every',default=10000, help='how often in epochs to save training model')
+    parser.add_argument('-uc', '--use_center', action='store_true', default=False, help='use means instead of sampling')
+    parser.add_argument('-tf', '--teacher_force', action='store_true', default=False)
+    parser.add_argument('-n', '--num',default=300, help='length of data to generate')
     parser.add_argument('--num_plot', default=10, type=int, help='number of examples from training and test to plot')
 
     args = parser.parse_args()
@@ -130,8 +145,6 @@ if __name__ == '__main__':
     else:
         DEVICE = 'cpu'
 
-    save_every = args.save_every
-    data_loader = DataLoader(batch_size, seq_length, data_scale)
 
     lstm = mdnLSTM(input_size=input_size, hidden_size=hidden_size, number_mixtures=number_mixtures).to(DEVICE)
     model_save_name = 'model'
@@ -147,9 +160,6 @@ if __name__ == '__main__':
         test_cnts = lstm_dict['test_cnts']
         test_losses = lstm_dict['test_losses']
 
-    modelname = os.path.split(args.model_loadname)[1]
-    plot_basename = os.path.join(img_savedir, modelname).replace('.pkl', '')
-    generate_teacher_force(modelname, data_scale=20, dummy=args.dummy)
-    #generate(args.num_plot, train_cnts[-1], train_losses[-1], plot_basename)
+    generate(args.model_loadname, num=args.num,  data_scale=data_scale, teacher_force_predict=args.teacher_force, use_center=args.use_center)
     embed()
 

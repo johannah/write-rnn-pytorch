@@ -20,8 +20,8 @@ torch.manual_seed(139)
 
 def plot_losses(train_cnts, train_losses, test_cnts, test_losses, name='loss_example.png'):
     plt.figure(figsize=(3,3))
-    plt.plot(train_cnts, train_losses, label='train loss')
-    plt.plot(test_cnts, test_losses, label='test loss')
+    plt.plot(train_cnts, train_losses, label='train loss', lw=3)
+    plt.plot(test_cnts, test_losses, label='test loss', lw=1)
     plt.legend()
     plt.savefig(name)
     plt.close()
@@ -45,18 +45,22 @@ def get_dummy_data(v_x, v_y):
 
 def plot_strokes(strokes_x_in, strokes_y_in, name='example.png'):
     strokes_x = deepcopy(strokes_x_in)
-    strokes_y = deepcopy(strokes_y_in)
-    f, ax = plt.subplots(1,2, figsize=(6,3))
-    epsilon = 1e-8
-    strokes_x[:, :2] = np.cumsum(strokes_x[:, :2], axis=0)
-    ax[0].scatter(strokes_x[:,0], -strokes_x[:,1], c='b', s=2)
-    for stroke in split_strokes(strokes_x):
-        ax[0].plot(stroke[:,0], -stroke[:,1], c='b')
+    if strokes_y_in.sum()>0:
+        f, (ax1,ax2) = plt.subplots(1,2, figsize=(6,3))
+    else:
+        f, ax1 = plt.subplots(1,1, figsize=(6,3))
 
-    strokes_y[:, :2] = np.cumsum(strokes_y[:, :2], axis=0)
-    ax[1].scatter(strokes_y[:,0], -strokes_y[:,1], c='b', s=2)
-    for stroke in split_strokes(strokes_y):
-        ax[1].plot(stroke[:,0], -stroke[:,1], c='b')
+    strokes_x[:, :2] = np.cumsum(strokes_x[:, :2], axis=0)
+    ax1.scatter(strokes_x[:,0], -strokes_x[:,1], c='b', s=2)
+    for stroke in split_strokes(strokes_x):
+        ax1.plot(stroke[:,0], -stroke[:,1], c='b')
+
+    if strokes_y_in.sum()>0:
+        strokes_y = deepcopy(strokes_y_in)
+        strokes_y[:, :2] = np.cumsum(strokes_y[:, :2], axis=0)
+        ax2.scatter(strokes_y[:,0], -strokes_y[:,1], c='b', s=2)
+        for stroke in split_strokes(strokes_y):
+            ax2.plot(stroke[:,0], -stroke[:,1], c='b')
     plt.savefig(name)
     plt.close()
 

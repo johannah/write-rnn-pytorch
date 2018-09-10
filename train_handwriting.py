@@ -65,6 +65,7 @@ def loop(data_loader, num_epochs=1000, save_every=1000, train_losses=[], test_lo
     print("starting training loop for data with %s batches"%data_loader.num_batches)
     st = time.time()
     if len(train_losses):
+        # resume cnt from last save
         last_save = train_cnts[-1]
         cnt = train_cnts[-1]
     else:
@@ -89,19 +90,19 @@ def loop(data_loader, num_epochs=1000, save_every=1000, train_losses=[], test_lo
             y = Variable(torch.FloatTensor(np.swapaxes(y,1,0))).to(DEVICE)
             if dummy:
                 y_pred, loss = train(v_x, v_y, validation=False)
-                print('DUMMY test loss', loss)
+                print('DUMMY test loss', cnt, loss)
             else:
                 y_pred, loss = train(x.to(DEVICE),y.to(DEVICE),validation=False)
             train_cnts.append(cnt)
             train_losses.append(loss)
 
+            if cnt%100:
+                valy_pred, val_mean_loss = train(v_x,v_y,validation=True)
+                test_losses.append(val_mean_loss)
+                test_cnts.append(cnt)
             if cnt-last_save >= save_every:
                 last_save = cnt
                 # find test loss
-                valy_pred, val_mean_loss = train(v_x,v_y,validation=True)
-
-                test_losses.append(val_mean_loss)
-                test_cnts.append(cnt)
                 print('epoch: {} saving after example {} train loss {} test loss {}'.format(e,cnt,loss,val_mean_loss))
                 state = {
                         'train_cnts':train_cnts,
@@ -118,34 +119,6 @@ def loop(data_loader, num_epochs=1000, save_every=1000, train_losses=[], test_lo
             cnt+= x.shape[1]
             ecnt+= x.shape[1]
 
-def valid_loop(function, xvar, yvar):
-    aloss = []
-    cnt = 0
-    vdshape = (yvar.shape[0], yvar.shape[1], yvar.shape[2])
-    trues = np.zeros(vdshape)
-    predicts = np.zeros(vdshape)
-    batch_loss = []
-    ecnt = 0
-    for bst in np.arange(0, (xvar.shape[1]-batch_size)+1, batch_size, dtype=np.int):
-        xd = xvar[:,bst:bst+batch_size]
-        yd = yvar[:,bst:bst+batch_size]
-        y_pred, losses = function(lstm, hidden_size, DEVICE, mse_loss, xd, yd)
-        predicts[:,bst:bst+batch_size,:] = y_pred.detach().numpy()
-        trues[:,bst:bst+batch_size,:] = yd.detach().numpy()
-        cnt+=batch_size
-        ecnt+=batch_size
-        batch_loss.extend(losses)
-    # get leftovers
-    num_left = xvar.shape[1]-ecnt
-    if num_left:
-        xd = xvar[:,ecnt:]
-        yd = yvar[:,ecnt:]
-        y_pred, losses = function(lstm, hidden_size, DEVICE, mse_loss, xd, yd)
-        predicts[:,ecnt:,:] = y_pred.detach().numpy()
-        trues[:,ecnt:,:] = yd.detach().numpy()
-        cnt+=num_left
-        batch_loss.extend(losses)
-    return trues, predicts, batch_loss
 
 if __name__ == '__main__':
     import argparse
@@ -155,18 +128,15 @@ if __name__ == '__main__':
     hidden_size = 1024
     savedir = 'models'
     number_mixtures = 20
-    grad_clip = 10
+    grad_clip = 5
     data_scale = 20
     input_size = 3
     train_losses, test_losses, train_cnts, test_cnts = [], [], [], []
 
-    img_savedir = 'predictions'
     cnt = 0
     default_model_loadname = 'models/model_000000000190304.pkl'
     if not os.path.exists(savedir):
         os.makedirs(savedir)
-    if not os.path.exists(img_savedir):
-        os.makedirs(img_savedir)
     parser = argparse.ArgumentParser()
     parser.add_argument('-c', '--cuda', action='store_true', default=False)
     parser.add_argument('--dummy', action='store_true', default=False)
@@ -194,8 +164,8 @@ if __name__ == '__main__':
     optim = torch.optim.Adam(lstm.parameters(), lr=args.learning_rate)
 
     model_save_name = 'model'
-    if args.limit != -1:
-        model_save_name += "_limit_%04d"%args.limit
+    if args.dummy:
+        model_save_name += "_dummy"
 
     if args.load:
         if not os.path.exists(args.model_loadname):
@@ -211,14 +181,7 @@ if __name__ == '__main__':
             test_cnts = lstm_dict['test_cnts']
             test_losses = lstm_dict['test_losses']
 
-
-    if not args.plot:
-        loop(data_loader, save_every=save_every, num_epochs=args.num_epochs, train_losses=[], test_losses=[], train_cnts=[], test_cnts=[], dummy=args.dummy)
-
-    #else:
-    #    model_save_name = os.path.split(model_load_path)[1]
-    #    plot_results(cnt, valid_x_tensor[:,:batch_size], valid_y_tensor[:,:batch_size], name='test')
-    #    plot_results(cnt,       x_tensor[:,:batch_size],       y_tensor[:,:batch_size], name='train')
+    loop(data_loader, save_every=save_every, num_epochs=args.num_epochs, train_losses=[], test_losses=[], train_cnts=[], test_cnts=[], dummy=args.dummy)
 
     embed()
 
