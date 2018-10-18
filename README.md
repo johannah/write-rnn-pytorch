@@ -1,4 +1,7 @@
 ## Pytorch implementation of handwriting
+
+This is a repo for learning MDN 
+
 ### Inspired and heavily pulled from David Ha's tensorflow implementation
 Original Blog Post: 
 
