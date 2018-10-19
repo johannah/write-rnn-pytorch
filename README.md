@@ -2,7 +2,7 @@
 
 This is a repo for learning MDN-RNN. Tested on the handwriting dataset. 
 
-![alt text](partially_trained_writing.png?raw=true "Partially trained generated handwriting")
+![alt text](partially_trained_handwriting.png?raw=true "Partially trained generated handwriting")
 
 ### Inspired and heavily pulled from David Ha's tensorflow implementation
 Original Blog Post: 
